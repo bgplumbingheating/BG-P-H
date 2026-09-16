@@ -1128,6 +1128,27 @@
         font-size: 0.76rem;
         color: #7d8794;
       }
+      .form-status {
+        margin: 12px 0 0;
+        font-size: 0.9rem;
+        font-weight: 700;
+      }
+      .form-status:empty {
+        display: none;
+      }
+      .form-status[data-state="pending"] {
+        color: #626d7b;
+      }
+      .form-status[data-state="success"] {
+        color: #18794e;
+      }
+      .form-status[data-state="error"] {
+        color: #c2410c;
+      }
+      .quote-form button[disabled] {
+        opacity: 0.6;
+        cursor: wait;
+      }
       .photo-field {
         border: 1px dashed #c9d0d8;
         background: #f9fafb;
@@ -2961,28 +2982,40 @@
           if (e.target === lb) lb.classList.remove("open");
         });
       }
-      // Quote preview: progressive enhancement. The form also has a mailto action if JavaScript is unavailable.
+      // Quote form: submits to Formspree in the background. Without JavaScript it posts normally.
       const quoteForm = q("#quote-form");
       if (quoteForm) {
-        quoteForm.addEventListener("submit", (e) => {
+        const status = q("#quote-form-status");
+        const submitBtn = quoteForm.querySelector('button[type="submit"]');
+        const setStatus = (msg, state) => {
+          status.textContent = msg;
+          status.dataset.state = state;
+        };
+        quoteForm.addEventListener("submit", async (e) => {
           e.preventDefault();
           const d = new FormData(quoteForm);
-          const sub = "Website quote request - " + (d.get("service") || "Plumbing");
-          const lines = [
-            "Name: " + (d.get("name") || ""),
-            "Phone: " + (d.get("phone") || ""),
-            "Email: " + (d.get("email") || ""),
-            "Area: " + (d.get("area") || ""),
-            "Service: " + (d.get("service") || ""),
-            "",
-            "Project details:",
-            d.get("details") || "",
-          ];
-          window.location.href =
-            "mailto:BGplumbingheating@hotmail.com?subject=" +
-            encodeURIComponent(sub) +
-            "&body=" +
-            encodeURIComponent(lines.join("\\n"));
+          d.set("_subject", "Website quote request - " + (d.get("service") || "Plumbing"));
+          submitBtn.disabled = true;
+          setStatus("Sending…", "pending");
+          try {
+            const res = await fetch(quoteForm.action, {
+              method: "POST",
+              body: d,
+              headers: { Accept: "application/json" },
+            });
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              throw new Error(
+                (data.errors || []).map((x) => x.message).join(", ") || "Something went wrong.",
+              );
+            }
+            quoteForm.reset();
+            setStatus("Thanks! Your request was sent. BG will get back to you shortly.", "success");
+          } catch (err) {
+            setStatus(err.message + " Please try again, or call or text 519-709-2855.", "error");
+          } finally {
+            submitBtn.disabled = false;
+          }
         });
       }
     </script>
@@ -3000,8 +3033,8 @@
         ><span class="eyebrow">Request a quote</span>
         <h2>Tell BG what you need.</h2>
         <p>
-          For the fastest answer, call or text photos. Or fill out the short form and send the
-          details by email.
+          For the fastest answer, call or text photos. Or fill out the short form and BG will get
+          back to you.
         </p>
         <div class="quote-quick">
           <a href="tel:+15197092855">Call 519-709-2855</a><a href="sms:+15197092855">Text Photos</a
@@ -3010,9 +3043,8 @@
           >
         </div>
         <form
-          action="mailto:BGplumbingheating@hotmail.com?subject=Website%20Quote%20Request"
+          action="https://formspree.io/f/xldaozpv"
           class="quote-form"
-          enctype="text/plain"
           id="quote-form"
           method="post"
         >
@@ -3064,10 +3096,8 @@
             </div>
             <div class="field full">
               <button class="btn" type="submit">Send Quote Request</button>
-              <p class="form-note">
-                This preview opens your email app with the request details. The live website can be
-                connected to direct form delivery before launch.
-              </p>
+              <p aria-live="polite" class="form-status" id="quote-form-status" role="status"></p>
+              <p class="form-note">By submitting, you agree to be contacted about your request.</p>
             </div>
           </div>
         </form>
@@ -3496,8 +3526,20 @@
       (function () {
         const modals = [...document.querySelectorAll(".quote-target,.service-target")];
         if (!modals.length) return;
-        const close = (m) => m.classList.add("is-closed");
+        // Drop the #fragment from the address bar so it isn't kept on refresh or copy/paste.
+        // replaceState doesn't re-evaluate :target, so a closed modal stays hidden via .is-closed.
+        const clearHash = () => {
+          if (location.hash)
+            history.replaceState(history.state, "", location.pathname + location.search);
+        };
+        const close = (m) => {
+          m.classList.add("is-closed");
+          clearHash();
+        };
         const isOpen = (m) => m.matches(":target") && !m.classList.contains("is-closed");
+        // A refresh or pasted link shouldn't reopen a modal.
+        const loaded = modals.find((m) => location.hash === "#" + m.id);
+        if (loaded) close(loaded);
         modals.forEach((m) => {
           m.querySelectorAll(".quote-x,.quote-close,.service-close").forEach((el) => {
             el.addEventListener("click", (e) => {
@@ -3520,6 +3562,19 @@
             if (t) t.classList.remove("is-closed");
           });
         });
+        // Once scrolling settles (including after an anchor jump), clear the hash,
+        // unless a modal is open, since removing it then would close the modal.
+        let scrollTimer;
+        addEventListener(
+          "scroll",
+          () => {
+            clearTimeout(scrollTimer);
+            scrollTimer = setTimeout(() => {
+              if (!modals.some(isOpen)) clearHash();
+            }, 150);
+          },
+          { passive: true },
+        );
         addEventListener("keydown", (e) => {
           if (e.key !== "Escape") return;
           const open = modals.find(isOpen);
